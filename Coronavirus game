@@ -1,0 +1,348 @@
+"""
+
+
+
+
+Artwork from: http://kenney.nl
+Tiled available from: http://www.mapeditor.org/
+
+If Python and Arcade are installed, this example can be run from the command line with:
+python -m arcade.examples.sprite_tiled_map_with_levels
+"""
+
+import arcade
+import os
+import time
+
+TILE_SPRITE_SCALING = 0.5
+PLAYER_SCALING = 0.6
+
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
+##SCREEN_TITLE = "Coronavirus GAME"
+SPRITE_PIXEL_SIZE = 128
+GRID_PIXEL_SIZE = (SPRITE_PIXEL_SIZE * TILE_SPRITE_SCALING)
+
+# How many pixels to keep as a minimum margin between the characterz
+# and the edge of the screen.
+VIEWPORT_MARGIN_TOP = 60
+VIEWPORT_MARGIN_BOTTOM = 60
+VIEWPORT_RIGHT_MARGIN = 270
+VIEWPORT_LEFT_MARGIN = 270
+
+# Physics
+MOVEMENT_SPEED = 5
+JUMP_SPEED = 23
+GRAVITY = 1.1
+class MenuView(arcade.View):
+    def on_show(self):
+        arcade.set_background_color(arcade.color.WHITE)
+        arcade.set_viewport(0, SCREEN_WIDTH - 1, 0, SCREEN_HEIGHT - 1)
+
+
+    def on_draw(self):
+        arcade.start_render()
+        arcade.draw_text("CORONAVAIRUS THE GAME", SCREEN_WIDTH/2, SCREEN_HEIGHT/2,
+                         arcade.color.BLACK, font_size=40, anchor_x="center")
+        arcade.draw_text("Click para avanzar", SCREEN_WIDTH/2, SCREEN_HEIGHT/2-75,
+                         arcade.color.GRAY, font_size=20, anchor_x="center")
+
+    def on_mouse_press(self, _x, _y, _button, _modifiers):
+        instructions_view = InstructionView()
+        self.window.show_view(instructions_view)
+
+
+class InstructionView(arcade.View):
+    def on_show(self):
+        arcade.set_background_color(arcade.color.GREEN)
+        arcade.set_viewport(0, SCREEN_WIDTH - 1, 0, SCREEN_HEIGHT - 1)
+
+
+    def on_draw(self):
+        arcade.start_render()
+        arcade.draw_text("¿COMÓ JUGAR?", SCREEN_WIDTH/2, SCREEN_HEIGHT/1-150,
+                         arcade.color.BLACK, font_size=50, anchor_x="center")
+        arcade.draw_text("Debes atrapar todos los elementos para combatir el CORONAVAIRUS.", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 1-230,
+                         arcade.color.BLACK, font_size=18, anchor_x="center")
+        arcade.draw_text("La única regla es no tocar al virus", SCREEN_WIDTH / 2,
+                         SCREEN_HEIGHT / 2,
+                         arcade.color.BLACK, font_size=20, anchor_x="center")
+        arcade.draw_text("EMPEZAR", SCREEN_WIDTH/2, SCREEN_HEIGHT/2-75,
+                         arcade.color.BLACK, font_size=20, anchor_x="center")
+
+    def on_mouse_press(self, _x, _y, _button, _modifiers):
+        game_view = MyGame()
+        game_view.setup()
+        self.window.show_view(game_view)
+
+
+
+class GameOverView(arcade.View):
+
+
+    def on_show(self):
+        arcade.set_background_color(arcade.color.BLACK)
+        arcade.set_viewport(0, SCREEN_WIDTH - 1, 0, SCREEN_HEIGHT - 1)
+
+    def on_draw(self):
+        arcade.start_render()
+        arcade.draw_text("Game Over", SCREEN_WIDTH/2, SCREEN_HEIGHT/2,
+                         arcade.color.WHITE, font_size=50, anchor_x="center")
+        arcade.draw_text("Volver a empezar", SCREEN_WIDTH/2, SCREEN_HEIGHT/2-75,
+                         arcade.color.WHITE, font_size=20, anchor_x="center")
+
+
+
+       #output_total = f"Total Score: {self.window.total_score}"
+        #arcade.draw_text(output_total, 10, 10, arcade.color.WHITE, 14)
+
+    def on_mouse_press(self, _x, _y, _button, _modifiers):
+        game_view2 = MenuView()
+        self.window.show_view(game_view2)
+
+class MyGame(arcade.View):
+    """ Main application class. """
+
+    def __init__(self):
+        """
+        Initializer
+        """
+        super().__init__()
+
+        # Set the working directory (where we expect to find files) to the same
+        # directory this .py file is in. You can leave this out of your own
+        # code, but it is needed to easily run the examples using "python -m"
+        # as mentioned at the top of this program.
+        file_path = os.path.dirname(os.path.abspath(__file__))
+        os.chdir(file_path)
+
+        # Sprite lists
+        self.wall_list = None
+        self.player_list = None
+        self.coin_list = None
+        self.virus_list= None
+
+        # Set up the player
+        self.score = 0
+        self.player_sprite = None
+
+        self.physics_engine = None
+        self.view_left = 0
+        self.view_bottom = 0
+        self.end_of_map = 0
+        self.game_over = False
+        self.last_time = None
+        self.frame_count = 0
+        self.fps_message = None
+
+        self.level = 1
+        self.max_level = 2
+        self.jump_sound = arcade.load_sound(":resources:sounds/coronainicio.wav")
+        self.EPP_sound = arcade.load_sound(":resources:sounds/coin3.wav")
+        self.over_sound = arcade.load_sound(":resources:sounds/coronafinal.wav")
+
+    def setup(self):
+        """ Set up the game and initialize the variables. """
+
+        # Sprite lists
+        self.player_list = arcade.SpriteList()
+        self.coin_list = arcade.SpriteList()
+        self.virus_list = arcade.SpriteList()
+        self.score = 0
+        # Set up the player
+        self.player_sprite = arcade.Sprite(":resources:images/animated_characters/female_person/femalePerson_idle.png",
+                                           PLAYER_SCALING)
+
+        # Starting position of the player
+        self.player_sprite.center_x = 128
+        self.player_sprite.center_y = 64
+        self.player_list.append(self.player_sprite)
+
+        self.load_level(self.level)
+
+        self.game_over = False
+
+    def load_level(self, level):
+        # Read in the tiled map
+        my_map = arcade.tilemap.read_tmx(f":resources:tmx_maps/level_{level}.tmx")
+        arcade.play_sound(self.jump_sound)
+        # --- Walls ---
+
+        # Calculate the right edge of the my_map in pixels
+        self.end_of_map = my_map.map_size.width * GRID_PIXEL_SIZE
+
+        # Grab the layer of items we can't move through
+        self.wall_list = arcade.tilemap.process_layer(my_map, 'Platforms', TILE_SPRITE_SCALING)
+        self.coin_list = arcade.tilemap.process_layer(my_map, 'elementos', TILE_SPRITE_SCALING)
+        self.virus_list = arcade.tilemap.process_layer(my_map, 'virus', TILE_SPRITE_SCALING)
+        self.physics_engine = arcade.PhysicsEnginePlatformer(self.player_sprite,
+                                                             self.wall_list,
+                                                             gravity_constant=GRAVITY)
+
+        # --- Other stuff
+        # Set the background color
+        if my_map.background_color:
+            arcade.set_background_color(my_map.background_color)
+
+        # Set the view port boundaries
+        # These numbers set where we have 'scrolled' to.
+        self.view_left = 0
+        self.view_bottom = 0
+
+    def on_draw(self):
+        """
+        Render the screen.
+        """
+
+        self.frame_count += 1
+
+        # This command has to happen before we start drawing
+        arcade.start_render()
+
+        output = f"EPP: {self.score}"
+        arcade.draw_text(output, self.view_left + 10, self.view_bottom + 60, arcade.color.BLACK, 14)
+
+
+
+
+        # Draw all the sprites.
+        self.player_list.draw()
+        self.wall_list.draw()
+        self.coin_list.draw()
+        self.virus_list.draw()
+
+
+        if self.last_time and self.frame_count % 60 == 0:
+            fps = 1.0 / (time.time() - self.last_time) * 60
+            self.fps_message = f"FPS: {fps:5.0f}"
+
+        if self.fps_message:
+            arcade.draw_text(self.fps_message, self.view_left + 10, self.view_bottom + 40, arcade.color.BLACK, 14)
+
+        if self.frame_count % 60 == 0:
+            self.last_time = time.time()
+
+        # Put the text on the screen.
+        # Adjust the text position based on the view port so that we don't
+        # scroll the text too.
+        distance = self.player_sprite.right
+        output = f"Distance: {distance:.0f}"
+        arcade.draw_text(output, self.view_left + 10, self.view_bottom + 20, arcade.color.BLACK, 14)
+
+        if self.game_over:
+            arcade.draw_text("Game Over", self.view_left + 200, self.view_bottom + 200, arcade.color.BLACK, 30)
+
+    def on_key_press(self, key, modifiers):
+        """
+        Called whenever the mouse moves.
+        """
+        if key == arcade.key.UP:
+            if self.physics_engine.can_jump():
+                self.player_sprite.change_y = JUMP_SPEED
+
+        elif key == arcade.key.LEFT:
+            self.player_sprite.change_x = -MOVEMENT_SPEED
+        elif key == arcade.key.RIGHT:
+            self.player_sprite.change_x = MOVEMENT_SPEED
+
+    def on_key_release(self, key, modifiers):
+        """
+        Called when the user presses a mouse button.
+        """
+        if key == arcade.key.LEFT or key == arcade.key.RIGHT:
+            self.player_sprite.change_x = 0
+
+    def on_update(self, delta_time):
+        """ Movement and game logic """
+
+        if self.player_sprite.right >= self.end_of_map:
+            if self.level < self.max_level:
+                self.level += 1
+                self.load_level(self.level)
+                self.player_sprite.center_x = 128
+                self.player_sprite.center_y = 64
+                self.player_sprite.change_x = 0
+                self.player_sprite.change_y = 0
+            else:
+                self.game_over = True
+
+        # Call update on all sprites (The sprites don't do much in this
+        # example though.)
+        if not self.game_over:
+            self.physics_engine.update()
+
+        coins_hit = arcade.check_for_collision_with_list(self.player_sprite, self.coin_list)
+        for coin in coins_hit:
+            coin.remove_from_sprite_lists()
+            self.score += 1
+            arcade.play_sound(self.EPP_sound)
+
+
+
+
+
+        virus_hit = arcade.check_for_collision_with_list(self.player_sprite, self.virus_list)
+        for virus in virus_hit:
+            virus.remove_from_sprite_lists()
+            #self.game_over = True
+            arcade.play_sound(self.over_sound)
+            game_over_view = GameOverView()
+
+            #self.window.set_mouse_visible(True)
+            self.window.show_view(game_over_view)
+ # --- Manage Scrolling ---
+
+        # Track if we need to change the view port
+
+        changed = False
+
+        # Scroll left
+        left_bndry = self.view_left + VIEWPORT_LEFT_MARGIN
+        if self.player_sprite.left < left_bndry:
+            self.view_left -= left_bndry - self.player_sprite.left
+            changed = True
+
+        # Scroll right
+        right_bndry = self.view_left + SCREEN_WIDTH - VIEWPORT_RIGHT_MARGIN
+        if self.player_sprite.right > right_bndry:
+            self.view_left += self.player_sprite.right - right_bndry
+            changed = True
+
+        # Scroll up
+        top_bndry = self.view_bottom + SCREEN_HEIGHT - VIEWPORT_MARGIN_TOP
+        if self.player_sprite.top > top_bndry:
+            self.view_bottom += self.player_sprite.top - top_bndry
+            changed = True
+
+        # Scroll down
+        bottom_bndry = self.view_bottom + VIEWPORT_MARGIN_BOTTOM
+        if self.player_sprite.bottom < bottom_bndry:
+            self.view_bottom -= bottom_bndry - self.player_sprite.bottom
+            changed = True
+
+        # If we need to scroll, go ahead and do it.
+        if changed:
+            self.view_left = int(self.view_left)
+            self.view_bottom = int(self.view_bottom)
+            arcade.set_viewport(self.view_left,
+                                SCREEN_WIDTH + self.view_left,
+                                self.view_bottom,
+                                SCREEN_HEIGHT + self.view_bottom)
+
+
+
+
+
+
+
+def main():
+    window = arcade.Window(SCREEN_WIDTH, SCREEN_HEIGHT, "CORONAVAIRUS THE GAME")
+    menu_view = MenuView()
+    window.total_score = 0
+    window.show_view(menu_view)
+    arcade.run()
+
+
+
+if __name__ == "__main__":
+    main()
